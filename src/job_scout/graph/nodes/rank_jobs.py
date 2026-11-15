@@ -93,5 +93,12 @@ def rank_jobs(state: AgentState) -> dict:
                 )
             )
 
-    ranked.sort(key=lambda r: r.fit_score, reverse=True)
+    ranked.sort(
+        key=lambda item: (
+            -item.fit_score,
+            item.job.title.casefold(),
+            item.job.company.casefold(),
+            item.job.job_id,
+        )
+    )
     return {"ranked_jobs": ranked, "llm_calls": calls}

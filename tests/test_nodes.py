@@ -106,6 +106,26 @@ def test_rank_jobs_ignores_scores_for_jobs_outside_batch(monkeypatch, sample_pro
     assert out["llm_calls"] == 1
 
 
+def test_rank_jobs_breaks_score_ties_deterministically(monkeypatch, sample_profile):
+    jobs = [
+        make_job("j1", "Zeta Engineer", "Acme"),
+        make_job("j2", "Alpha Engineer", "Globex"),
+    ]
+    scores = [
+        JobScore(job_id="j1", fit_score=80, fit_explanation="ok"),
+        JobScore(job_id="j2", fit_score=80, fit_explanation="ok"),
+    ]
+    monkeypatch.setattr(
+        rank_mod,
+        "get_chat_model",
+        lambda *a, **k: structured_llm(JobScores(scores=scores)),
+    )
+
+    out = rank_jobs({"profile": sample_profile, "jobs": jobs, "llm_calls": 0})
+
+    assert [item.job.title for item in out["ranked_jobs"]] == ["Alpha Engineer", "Zeta Engineer"]
+
+
 def test_reformulate_increments_counter(monkeypatch, sample_profile):
     monkeypatch.setattr(reformulate_mod, "get_chat_model", lambda *a, **k: plain_llm("data analyst"))
     state = {"profile": sample_profile, "search_query": "data scientist", "reformulation_count": 0, "llm_calls": 3}
