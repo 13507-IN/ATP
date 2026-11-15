@@ -10,7 +10,7 @@ from collections.abc import Iterator
 
 from job_scout.config import get_settings
 from job_scout.graph.prompts.rank_jobs import RANK_JOBS_PROMPT
-from job_scout.graph.schemas import JobPosting, JobScores, Profile, RankedJob
+from job_scout.graph.schemas import JobPosting, JobScore, JobScores, Profile, RankedJob
 from job_scout.graph.state import AgentState
 from job_scout.llm import ensure_budget, get_chat_model
 
@@ -56,7 +56,6 @@ def rank_jobs(state: AgentState) -> dict:
     if not jobs:
         return {"ranked_jobs": []}
 
-    by_id = {job.job_id: job for job in jobs}
     calls = state.get("llm_calls", 0)
     n_batches = (len(jobs) + BATCH_SIZE - 1) // BATCH_SIZE
     ensure_budget(calls, n_batches, settings.max_llm_calls_per_run)
@@ -67,10 +66,23 @@ def rank_jobs(state: AgentState) -> dict:
         prompt = RANK_JOBS_PROMPT.format(profile=_render_profile(profile), jobs=_render_jobs(batch))
         result: JobScores = model.invoke(prompt)
         calls += 1
+
+        batch_by_id = {job.job_id: job for job in batch}
+        scores_by_id: dict[str, JobScore] = {}
         for score in result.scores:
-            job = by_id.get(score.job_id)
-            if job is None:
+            if score.job_id not in batch_by_id:
                 continue
+            if score.job_id in scores_by_id:
+                raise ValueError(f"Ranking response contains duplicate scores for job ID: {score.job_id}")
+            scores_by_id[score.job_id] = score
+
+        missing_ids = batch_by_id.keys() - scores_by_id.keys()
+        if missing_ids:
+            missing = ", ".join(sorted(missing_ids))
+            raise ValueError(f"Ranking response is missing scores for job IDs: {missing}")
+
+        for job in batch:
+            score = scores_by_id[job.job_id]
             ranked.append(
                 RankedJob(
                     job=job,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import job_scout.graph.nodes.fetch_jobs as fetch_mod
 import job_scout.graph.nodes.rank_jobs as rank_mod
 import job_scout.graph.nodes.reformulate_query as reformulate_mod
@@ -65,6 +67,43 @@ def test_rank_jobs_batches_by_five(monkeypatch, sample_profile):
 def test_rank_jobs_empty_jobs(sample_profile):
     out = rank_jobs({"profile": sample_profile, "jobs": [], "llm_calls": 0})
     assert out["ranked_jobs"] == []
+
+
+def test_rank_jobs_rejects_missing_score(monkeypatch, sample_profile):
+    jobs = [make_job("j1", "Data Scientist", "Acme")]
+    monkeypatch.setattr(rank_mod, "get_chat_model", lambda *a, **k: structured_llm(JobScores(scores=[])))
+
+    with pytest.raises(ValueError, match="missing scores for job IDs: j1"):
+        rank_jobs({"profile": sample_profile, "jobs": jobs, "llm_calls": 0})
+
+
+def test_rank_jobs_rejects_duplicate_score(monkeypatch, sample_profile):
+    jobs = [make_job("j1", "Data Scientist", "Acme")]
+    duplicate = JobScore(job_id="j1", fit_score=80, fit_explanation="ok")
+    monkeypatch.setattr(
+        rank_mod,
+        "get_chat_model",
+        lambda *a, **k: structured_llm(JobScores(scores=[duplicate, duplicate])),
+    )
+
+    with pytest.raises(ValueError, match="duplicate scores for job ID: j1"):
+        rank_jobs({"profile": sample_profile, "jobs": jobs, "llm_calls": 0})
+
+
+def test_rank_jobs_ignores_scores_for_jobs_outside_batch(monkeypatch, sample_profile):
+    jobs = [make_job("j1", "Data Scientist", "Acme")]
+    valid = JobScore(job_id="j1", fit_score=80, fit_explanation="ok")
+    unrelated = JobScore(job_id="not-in-batch", fit_score=100, fit_explanation="ok")
+    monkeypatch.setattr(
+        rank_mod,
+        "get_chat_model",
+        lambda *a, **k: structured_llm(JobScores(scores=[unrelated, valid])),
+    )
+
+    out = rank_jobs({"profile": sample_profile, "jobs": jobs, "llm_calls": 0})
+
+    assert [item.job.job_id for item in out["ranked_jobs"]] == ["j1"]
+    assert out["llm_calls"] == 1
 
 
 def test_reformulate_increments_counter(monkeypatch, sample_profile):
